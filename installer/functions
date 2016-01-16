@@ -286,3 +286,40 @@ websocketcommand() {
         echo "EError timeout"
     fi
 }
+
+# Perform minimal sanity parsing of the content.
+# If the following conditions are all true then the format
+# of the file's content is assumed correct:
+#    1) The first line of the file is "-----BEGIN PGP SIGNED MESSAGE-----"
+#    2) The last line of the file is "-----END PGP SIGNATURE-----"
+#    3) There exists only one line with "-----BEGIN PGP SIGNED MESSAGE-----"
+#    4) There exists only one line with "-----BEGIN PGP SIGNATURE-----"
+#    5) There exists only one line with "-----END PGP SIGNATURE-----"
+#    6) In the file the "BEGIN PGP SIGNED MESSAGE" line is located before
+#       the "BEGIN PGP SIGNATURE" line
+#    7) In the file the "BEGIN PGP SIGNED MESSAGE" line is located before
+#       the "END PGP SIGNATURE" line
+#    8) In the file the "BEGIN PGP SIGNATURE" line is located before
+#       the "END PGP SIGNATURE" line
+# These hold true for Debian (Ubuntu, etc). Other distros may need different
+# logic.
+is_pgp_formatted() {
+    sigfile="$1"
+    if [ ! "`head -n 1 $sigfile`" = "-----BEGIN PGP SIGNED MESSAGE-----" ] || \
+       [ ! "`tail -n 1 $sigfile`" = "-----END PGP SIGNATURE-----" ] || \
+       [ ! `grep -c "^-----BEGIN PGP SIGNED MESSAGE-----$" $sigfile` = 1 ] || \
+       [ ! `grep -c "^-----BEGIN PGP SIGNATURE-----$" $sigfile` = 1 ] || \
+       [ ! `grep -c "^-----END PGP SIGNATURE-----$" $sigfile` = 1 ]; then
+        return 1
+    fi
+
+    msg_begin=`grep -n "^-----BEGIN PGP SIGNED MESSAGE-----$" $sigfile | cut -d: -f1`
+    sig_begin=`grep -n "^-----BEGIN PGP SIGNATURE-----$" $sigfile | cut -d: -f1`
+    sig_end=`grep -n "^-----END PGP SIGNATURE-----$" $sigfile | cut -d: -f1`
+    if [ $msg_begin -gt $sig_begin -o \
+         $msg_begin -gt $sig_end -o \
+         $sig_begin -gt $sig_end ]; then
+        return 1
+    fi
+    return 0
+}

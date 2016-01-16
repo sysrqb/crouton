@@ -21,17 +21,20 @@ DISTRO=''
 DOWNLOADONLY=''
 ENCRYPT=''
 KEYFILE=''
+PGPSVR='hkps://hkps.pool.sks-keyservers.net'
 MIRROR=''
 MIRROR2=''
 NAME=''
 PREFIX='/usr/local'
 PREFIXSET=''
+CACERT='etc/crouton/ssl/certs/sks-keyservers.netCA.pem'
 CHROOTSLINK='/mnt/stateful_partition/crouton/chroots'
 PROXY='unspecified'
 RELEASE=''
 RESTORE=''
 RESTOREBIN=''
 DEFAULTRELEASE='precise'
+VERIFYSIG=''
 TARBALL=''
 TARGETS=''
 TARGETFILE=''
@@ -61,6 +64,10 @@ Options:
                 Default: autodetected for the current chroot or system.
     -b          Restore crouton scripts in PREFIX/bin, as required by the
                 chroots currently installed in PREFIX/chroots.
+    -C CACERT   Path to the CA certificate file used when fetching PGP keys
+                from a keyserver over HKPS. A Path beginning with '/' is not
+                modified, all others begin with PREFIX.
+                Default: PREFIX/$CACERT
     -d          Downloads the bootstrap tarball but does not prepare the chroot.
     -e          Encrypt the chroot with ecryptfs using a passphrase.
                 If specified twice, prompt to change the encryption passphrase.
@@ -69,6 +76,7 @@ Options:
     -k KEYFILE  File or directory to store the (encrypted) encryption keys in.
                 If unspecified, the keys will be stored in the chroot if doing a
                 first encryption, or auto-detected on existing chroots.
+    -K PGPSVR   Keyserver used for fetching PGP keys. Default: $PGPSVR
     -m MIRROR   Mirror to use for bootstrapping and package installation.
                 Default depends on the release chosen.
                 Can only be specified during chroot creation and forced updates
@@ -87,6 +95,8 @@ Options:
     -r RELEASE  Name of the distribution release. Default: $DEFAULTRELEASE,
                 or auto-detected if upgrading a chroot and -n is specified.
                 Specify 'help' or 'list' to print out recognized releases.
+    -s          Verify the signature (when possible) for the bootstrap
+                download.
     -t TARGETS  Comma-separated list of environment targets to install.
                 Specify 'help' or 'list' to print out potential targets.
     -T TARGETFILE  Path to a custom target definition file that gets applied to
@@ -111,20 +121,23 @@ secure as the passphrases you assign to them."
 . "$SCRIPTDIR/installer/functions"
 
 # Process arguments
-while getopts 'a:bdef:k:m:M:n:p:P:r:s:t:T:uUV' f; do
+while getopts 'a:bC:def:k:K:m:M:n:p:P:r:st:T:uUV' f; do
     case "$f" in
     a) ARCH="$OPTARG";;
     b) RESTOREBIN='y';;
+    C) CACERT="$OPTARG";;
     d) DOWNLOADONLY='y';;
     e) ENCRYPT="${ENCRYPT:-"-"}e";;
     f) TARBALL="$OPTARG";;
     k) KEYFILE="$OPTARG";;
+    K) PGPSVR="$OPTARG";;
     m) MIRROR="$OPTARG";;
     M) MIRROR2="$OPTARG";;
     n) NAME="$OPTARG";;
     p) PREFIX="`readlink -m -- "$OPTARG"`"; PREFIXSET='y';;
     P) PROXY="$OPTARG";;
     r) RELEASE="$OPTARG";;
+    s) VERIFYSIG='y';;
     t) TARGETS="$TARGETS${TARGETS:+","}$OPTARG";;
     T) TARGETFILE="$OPTARG";;
     u) UPDATE="$((UPDATE+1))";;
@@ -204,6 +217,19 @@ if [ ! -d "$PREFIX" ]; then
     error 2 "$PREFIX is not a valid prefix"
 fi
 
+# Validate signature-verifcation options
+if [ -n $VERIFYSIG ]; then
+    if [ ! "${CACERT:0:1}" = "/" -a ! -f $PREFIX/$CACERT ] \
+        || [ ! -f $CACERT ]; then
+        # CA certificate must exist if we're verifying a sig
+	error 2 "$CACERT does not exist."
+    elif [ -n $VERIFYSIG ] && ! `which gpg` || ! `which gpg2`; then
+        # If we're verifying a sig, then we assume we need gnupg
+        error 2 "gnupg is not installed but signature verification was" \
+	        "requested."
+    fi
+fi
+
 # There should never be any extra parameters.
 if [ ! $# = 0 ]; then
     error 2 "$USAGE"
@@ -269,6 +295,11 @@ fi
 
 if [ -n "$RESTORE" -a -n "$TARGETS$TARGETFILE" -a -z "$UPDATE" ]; then
     error 2 "Specify -u if you want to add targets when you restore a chroot."
+fi
+
+if [ -n "$VERIFYSIG" -a -n "$RESTORE$RESTOREBIN$UPDATE" -a \
+     -z "$DOWNLOADONLY$TARGETS$TARGETFILE" ]; then
+    error 2 "Verifying a signature only works during bootstrap"
 fi
 
 # Detect which distro the release belongs to.

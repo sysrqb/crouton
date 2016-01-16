@@ -6,14 +6,56 @@
 # This is a distro-specific bootstrap script, sourced from main.sh, and as such
 # has access to all of the variables set by main.sh, namely $tmp (the temporary
 # directory), $INSTALLERDIR/$DISTRO, $RELEASE, $BOOTSTRAP_RELEASE (if different
-# from $RELEASE), $ARCH, and $MIRROR.
+# from $RELEASE), $ARCH, $CAFILE, $VERIFYSIG, and $MIRROR.
+
+PINNEDFINGERPRINTS=('B60EBF2984453C70D74CF478FF914AF0C2B35520' \
+                    'D5C2F9BFCA128BBA22A77218872F702C4D6E25A8')
+
+if [ -n $VERIFYSIG ]; then
+    if [ ! "${CACERT:0:1}" = "/" ]; then
+        CACERT=$PREFIX/$CACERT
+    fi
+
+    # Create the temporary directory and delete it upon exit
+    sigtmp="`mktemp -d --tmpdir=/tmp "${APPLICATION}_pgp"`"
+    addtrap "rm -rf --one-file-system '$sigtmp'"
+
+    # Ensure that the temporary directory has exec+dev, or mount a new tmpfs
+    if [ "$NOEXECTMP" = 'y' ]; then
+        mount -i -t tmpfs -o 'rw,dev,exec' tmpfs "$sigtmp"
+        addtrap "umount -l '$sigtmp'"
+    fi
+
+    gpg -q --no-default-keyring --homedir $sigtmp -k \
+    || error 2 "gnupg initialization failed"
+    cat > $sigtmp/gpg.conf << EOF
+keyserver $PGPSVR
+keyserver-options ca-cert-file=$CACERT
+keyserver-options no-try-dns-srv
+keyserver-options no-honor-keyserver-url
+keyid-format 0xlong
+with-fingerprint
+EOF
+
+    for key in "${PINNEDFINGERPRINTS[@]}"; do
+        gpg -q --no-default-keyring --homedir $sigtmp --recv-key $key \
+        || error 2 "Fetching key $key failed."
+        gpg -q --no-default-keyring --homedir $sigtmp -k $key > /dev/null \
+        || error 2 "Fetched key was not what we requested"
+    done
+fi
 
 # Grab the latest release of debootstrap
-echo 'Downloading latest debootstrap...' 1>&2
+echo -n 'Downloading latest debootstrap...' 1>&2
 d='https://anonscm.debian.org/gitweb/?p=d-i/debootstrap.git;a=snapshot;h=HEAD;sf=tgz'
-if ! wget -O- --no-verbose --timeout=60 -t2 "$d"  \
+if [ -n $VERIFYSIG ] || ! wget -O- --no-verbose --timeout=60 -t2 "$d"  \
         | tar -C "$tmp" --strip-components=1 -zx 2>/dev/null; then
-    echo 'Download from Debian gitweb failed. Trying latest release...' 1>&2
+    if [ -z $VERIFYSIG ]; then
+        echo 1>&2
+        echo 'Download from Debian gitweb failed. Trying latest release...' 1>&2
+    else
+        echo 'and signature...' 1>&2
+    fi
     d='http://httpredir.debian.org/debian/pool/main/d/debootstrap/'
     f="`wget -O- --no-verbose --timeout=60 -t2 "$d" \
             | sed -ne 's ^.*\(debootstrap_[0-9.]*.tar.gz\).*$ \1 p' \
@@ -26,8 +68,23 @@ Check your internet connection or proxy settings and try again.'
     v="${v%.tar.xz}"
     echo "Downloading debootstrap version $v..." 1>&2
     if ! wget -O- --no-verbose --timeout=60 -t2 "$d$f" \
+            | tee $sigtmp/$f \
             | tar -C "$tmp" --strip-components=1 -zx 2>/dev/null; then
         error 1 'Failed to download debootstrap.'
+    fi
+    if [ -n $VERIFYSIG ]; then
+        s="${f/tar.gz/dsc}"
+        if ! wget -O "$sigtmp/$s" --no-verbose --timeout=60 -t2 "$d$s"; then
+            error 1 'Failed to download debootstrap signature.'
+        fi
+        if ! is_pgp_formatted "$sigtmp/$s" || \
+                ! gpg -q --no-default-keyring --homedir $sigtmp --verify \
+                $sigtmp/$s || \
+                ! grep -q `sha256sum $sigtmp/$f | awk '{ print $1; }'` \
+                $sigtmp/$s; then
+            error 1 "Signature verification failed."
+        fi
+        echo "Verification successful."
     fi
 fi
 
