@@ -9,6 +9,7 @@ HOSTBIN='startxiwi'
 CHROOTBIN='croutoncycle croutonfindnacl croutontriggerd croutonxinitrc-wrapper setres xinit xiwi'
 CHROOTETC='xbindkeysrc.scm xiwi.conf xorg-dummy.conf xserverrc xserverrc-xiwi xserverrc-local.example'
 . "${TARGETSDIR:="$PWD"}/common"
+XF86VIDEODUMMY037_DIGEST='19d1f55d2ffa5d7ef3ee62d06beb344d10f57c90de578c28850146eeb45206cd'
 
 ### Append to prepare.sh:
 XMETHOD="${XMETHOD:-xiwi}"
@@ -48,6 +49,17 @@ addtrap "rm -rf --one-file-system '$DUMMYBUILDTMP'"
 echo "Download Xorg dummy driver..." 1>&2
 
 wget -O "$DUMMYBUILDTMP/dummy.tar.gz" "$urlbase/xf86-video-dummy-0.3.7.tar.gz"
+retry_n=5
+retried=0
+while $(grep -q $(sha256sum "$DUMMYBUILDTMP/dummy.tar.gz") $XF86VIDEODUMMY037_DIGEST); do
+    echo "Xorg dummy driver downloaded isn't valid. Retrying..." 1>&2
+    (( retried += 1 ))
+    wget -O "$DUMMYBUILDTMP/dummy.tar.gz" "$urlbase/xf86-video-dummy-0.3.7.tar.gz"
+    if [ "$retried" -gt "$retry_n" ]; then
+        echo "After 5 retries. Failing." 1>&2
+        exit 1
+    fi
+done
 
 install --minimal --asdeps patch gcc libc-dev pkg-config \
     xserver-xorg-dev$ltspackages x11proto-xf86dga-dev

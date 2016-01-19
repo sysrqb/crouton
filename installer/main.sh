@@ -747,6 +747,9 @@ TARGETNOINSTALL="$RESTOREHOSTBIN"
 if [ -n "$TARGETFILE" ]; then
     TARGET="`readlink -f -- "$TARGETFILE"`"
     (. "$TARGET") >> "$PREPARE"
+    if [ ! -s "$PREPARE" ]; then
+         error 1 "Preparations failed. See above error."
+    fi
 fi
 t="${TARGETS%,},post-common,"
 while [ -n "$t" ]; do
