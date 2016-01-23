@@ -220,10 +220,10 @@ fi
 # Validate signature-verifcation options
 if [ -n $VERIFYSIG ]; then
     if [ ! "${CACERT:0:1}" = "/" -a ! -f $PREFIX/$CACERT ] \
-        || [ ! -f $CACERT ]; then
+        && [ ! -f $CACERT ]; then
         # CA certificate must exist if we're verifying a sig
 	error 2 "$CACERT does not exist."
-    elif [ -n $VERIFYSIG ] && ! `which gpg` || ! `which gpg2`; then
+    elif ! which gpg && ! which gpg2; then
         # If we're verifying a sig, then we assume we need gnupg
         error 2 "gnupg is not installed but signature verification was" \
 	        "requested."
