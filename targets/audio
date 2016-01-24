@@ -36,26 +36,83 @@ if [ -z "$ADHD_HEAD" ]; then
     fi
 fi
 
-echo "Fetching CRAS (branch $ADHD_HEAD)..." 1>&2
-
-# Try to download the CRAS commit id first, and fall back on master if that is
-# not found (see crbug.com/417820).
+# Download the list of CRAS tags, if there is an exact match between
+# $CROS_VERS_1 and a release tag, then try fetching CRAS by the CRAS commit
+# id first. If that fails (see crbug.com/417820), fall back on the release
+# tag and then try master if the tag is not found.
 
 archive="$CRASBUILDTMP/adhd.tar.gz"
 log="$CRASBUILDTMP/wget.log"
-urlbase="https://chromium.googlesource.com/chromiumos/third_party/adhd/+archive"
-( wget -O "$archive" "$urlbase/$ADHD_HEAD.tar.gz" 2>&1 \
+urlbase="https://chromium.googlesource.com/chromiumos/third_party/adhd"
+
+releases=`wget -O - $urlbase/+refs 2>/dev/null | \
+    grep -o "release-R[0-9]\{2\}-[0-9]\{4,5\}.B" | \
+    sort | uniq`
+closest_release=`echo "$releases" | \
+    awk '
+        BEGIN { crosver='$CROS_VER_1'; nextrel=10000; releases[""]=0; }
+        NF == 1 && /^release-.*\.B$/ {
+            cur=$0;
+            release_len=length(cur);
+            # Get the string after "release-"
+            release_major=substr(cur, index(cur,"-")+1,
+                                release_len-length("release-"));
+            # Find the major version number between "-" and ".B"
+            major_idx=index(release_major,"-") + 1;
+            dot_b=index(cur, ".B")
+            # Find the major version number between the "-" and ".B"
+            major=substr(release_major, major_idx,
+                        release_len-(length("release-")+major_idx)- \
+                        (release_len-dot_b));
+            # Integer? I think yes.
+            major+=0;
+            releases[major]=cur;
+            # Is it greater than the last prevrel and less than our crosver?
+            if (major <= crosver && prevrel < major) {
+                prevrel=major;
+            }
+            # Is it less than the last nextrel and greater than our crosver?
+            if (major > crosver && nextrel > major) {
+                nextrel=major;
+            }
+        }
+        END {
+            prevdiff=crosver-prevrel;
+            postdiff=nextrel-crosver;
+            if ( postdiff < prevdiff) {
+                chosen=nextrel;
+            } else {
+                chosen=prevrel;
+            }
+            printf releases[chosen];
+        }'`
+
+if [ -n "$closest_release" ]; then
+    if [ "${closest_release##${CROS_VER_1}.B}" = "$closest_release" ]; then
+        ADHD_HEAD=$closest_release
+    fi
+fi
+
+echo "Fetching CRAS ($ADHD_HEAD)..." 1>&2
+( wget -O "$archive" "$urlbase/+archive/$ADHD_HEAD.tar.gz" 2>&1 \
                                     || echo "Error fetching CRAS" ) | tee "$log"
-if tail -n 1 "$log" | grep -q "^Error"; then
+while tail -n 1 "$log" | grep -q "^Error"; do
     if grep -q "404 Not Found" "$log" 2>/dev/null; then
-        echo "Branch not found, falling back on master (audio might not work)..." 1>&2
-        ADHD_HEAD="master"
-        wget -O "$archive" "$urlbase/$ADHD_HEAD.tar.gz"
+        if [ x"$ADHD_HEAD" = x"$closest_release" ]; then
+            ADHD_HEAD=master
+        elif [ x"$ADHD_HEAD" = "xmaster" ]; then
+            echo "Fetching master failed." 1>&2
+            exit 1
+        else
+            ADHD_HEAD=$closest_release
+        fi
+        echo "Branch not found, falling back on ${ADHD_HEAD} (audio might not work)..." 1>&2
+        wget -O "$archive" "$urlbase/+archive/$ADHD_HEAD.tar.gz"
     else
         # wget already printed an explicit error
         exit 1
     fi
-fi
+done
 
 # Build CRAS ALSA plugin for the given architecture ($1)
 # A blank parameter means we are building for the native architecture.
