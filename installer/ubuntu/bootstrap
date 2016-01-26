@@ -120,6 +120,12 @@ if awk '
         t=1
     }
     1
+    /mknod \$TARGET\/dev\/null/ {
+        printf "\tif \! grep "udev /dev" /proc/mounts; then\n";
+        printf "\t\treturn\n";
+        printf "\tfi\n";
+        printf $0 "\n";
+    }
     END { if (t != 4) exit 1 }
         ' "$tmp/functions" > "$tmp/functions.new"; then
     mv -f "$tmp/functions.new" "$tmp/functions"
